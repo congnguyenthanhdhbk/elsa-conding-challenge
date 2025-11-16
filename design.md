@@ -23,7 +23,7 @@
 
 ## 1. Architecture Overview
 
-### 1.1 High-Level Architecture
+### 1.1 High-Level Architecture (GCP-Native)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -36,50 +36,65 @@
 └─────────┼──────────────────┼──────────────────┼──────────────────┘
           │                  │                  │
           │  WebSocket       │  WebSocket       │  WebSocket
-          │                  │                  │
+          │  (WSS)           │  (WSS)           │  (WSS)
 ┌─────────┼──────────────────┼──────────────────┼──────────────────┐
+│  GCP LOAD BALANCING & EDGE                                       │
 │         ▼                  ▼                  ▼                   │
 │  ┌─────────────────────────────────────────────────────┐         │
-│  │           Load Balancer / API Gateway                │         │
-│  │         (Sticky Sessions for WebSockets)             │         │
+│  │    Cloud Load Balancer (HTTPS/WebSocket Support)    │         │
+│  │    • SSL/TLS Termination                             │         │
+│  │    • Cloud Armor (DDoS Protection)                   │         │
+│  │    • Session Affinity for WebSocket                  │         │
 │  └─────────────────────────────────────────────────────┘         │
 │                              │                                    │
 │         ┌────────────────────┼────────────────────┐              │
 │         │                    │                    │              │
 │         ▼                    ▼                    ▼              │
-│  ┌──────────┐        ┌──────────┐        ┌──────────┐           │
-│  │  Server  │        │  Server  │        │  Server  │           │
-│  │Instance 1│        │Instance 2│        │Instance N│           │
-│  │          │        │          │        │          │           │
-│  │ ┌──────┐ │        │ ┌──────┐ │        │ ┌──────┐ │           │
-│  │ │ WS   │ │        │ │ WS   │ │        │ │ WS   │ │           │
-│  │ │Handler│ │       │ │Handler│ │        │ │Handler│ │          │
-│  │ └──────┘ │        │ └──────┘ │        │ └──────┘ │           │
-│  │ ┌──────┐ │        │ ┌──────┐ │        │ ┌──────┐ │           │
-│  │ │Score │ │        │ │Score │ │        │ │Score │ │           │
-│  │ │Engine│ │        │ │Engine│ │        │ │Engine│ │           │
-│  │ └──────┘ │        │ └──────┘ │        │ └──────┘ │           │
-│  │ ┌──────┐ │        │ ┌──────┐ │        │ ┌──────┐ │           │
-│  │ │Leader│ │        │ │Leader│ │        │ │Leader│ │           │
-│  │ │board │ │        │ │board │ │        │ │board │ │           │
-│  │ └──────┘ │        │ └──────┘ │        │ └──────┘ │           │
-│  └────┬─────┘        └────┬─────┘        └────┬─────┘           │
-│       │                   │                   │                  │
-│       └───────────────────┼───────────────────┘                  │
-│                           │                                      │
-│                  SERVER TIER (IMPLEMENTED)                       │
-└───────────────────────────┼──────────────────────────────────────┘
-                            │
-        ┌───────────────────┼───────────────────┐
-        │                   │                   │
-        ▼                   ▼                   ▼
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   Redis      │    │  PostgreSQL  │    │  Pub/Sub     │
-│  (Cache &    │    │  (Primary    │    │  (Message    │
-│   Session)   │    │   Storage)   │    │   Broker)    │
-└──────────────┘    └──────────────┘    └──────────────┘
-                            │
-                  DATA TIER (MOCKED)
+│  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
+│  │  Cloud Run   │    │  Cloud Run   │    │  Cloud Run   │       │
+│  │  Instance 1  │    │  Instance 2  │    │  Instance N  │       │
+│  │              │    │              │    │              │       │
+│  │ ┌──────────┐ │    │ ┌──────────┐ │    │ ┌──────────┐ │       │
+│  │ │WebSocket │ │    │ │WebSocket │ │    │ │WebSocket │ │       │
+│  │ │ Handler  │ │    │ │ Handler  │ │    │ │ Handler  │ │       │
+│  │ └──────────┘ │    │ └──────────┘ │    │ └──────────┘ │       │
+│  │ ┌──────────┐ │    │ ┌──────────┐ │    │ ┌──────────┐ │       │
+│  │ │ Scoring  │ │    │ │ Scoring  │ │    │ │ Scoring  │ │       │
+│  │ │  Engine  │ │    │ │  Engine  │ │    │ │  Engine  │ │       │
+│  │ └──────────┘ │    │ └──────────┘ │    │ └──────────┘ │       │
+│  │ ┌──────────┐ │    │ ┌──────────┐ │    │ ┌──────────┐ │       │
+│  │ │Leaderboard│ │   │ │Leaderboard│ │    │ │Leaderboard│ │      │
+│  │ │  Service │ │    │ │  Service │ │    │ │  Service │ │       │
+│  │ └──────────┘ │    │ └──────────┘ │    │ └──────────┘ │       │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘       │
+│         │                   │                    │                │
+│         └───────────────────┼────────────────────┘                │
+│                             │                                     │
+│                  COMPUTE TIER (Cloud Run)                         │
+└─────────────────────────────┼─────────────────────────────────────┘
+                              │
+        ┌─────────────────────┼─────────────────────┐
+        │                     │                     │
+        ▼                     ▼                     ▼
+┌───────────────┐    ┌────────────────┐    ┌──────────────┐
+│ Memorystore   │    │  Cloud SQL     │    │  Pub/Sub     │
+│ for Redis     │    │  (PostgreSQL)  │    │  Topics &    │
+│ • Sessions    │    │  • Users       │    │  Subs        │
+│ • Leaderboard │    │  • Sessions    │    │  • Events    │
+│ • Cache       │    │  • Answers     │    │  • Broadcast │
+└───────────────┘    └────────────────┘    └──────────────┘
+        │                     │                     │
+        └─────────────────────┼─────────────────────┘
+                              │
+┌─────────────────────────────┼─────────────────────────────────────┐
+│                    GCP OBSERVABILITY                              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
+│  │Cloud Logging │  │Cloud Monitor │  │ Cloud Trace  │           │
+│  │ (Structured) │  │  (Metrics)   │  │ (Tracing)    │           │
+│  └──────────────┘  └──────────────┘  └──────────────┘           │
+└───────────────────────────────────────────────────────────────────┘
+
+                    DATA & MESSAGING TIER (GCP Managed Services)
 ```
 
 ### 1.2 Architectural Principles
@@ -175,17 +190,33 @@ The following components will be **mocked or simulated**:
 - **Built-in Concurrency**: Channels and goroutines perfect for real-time systems
 - **Strong Standard Library**: HTTP/WebSocket support, JSON handling
 - **Production-Ready**: Used by many high-scale real-time systems (Discord, Twitch chat backend)
-- **Easy Deployment**: Single binary, simple containerization
+- **Cloud Run Compatible**: Single binary, simple containerization, fast cold starts
+- **GCP SDK Support**: Official Google Cloud Go libraries with excellent integration
 
 **Key Libraries**:
 ```go
-- gorilla/websocket    // WebSocket server implementation
-- gin-gonic/gin        // HTTP router and middleware (lightweight)
-- go-redis/redis       // Redis client
-- lib/pq               // PostgreSQL driver
-- prometheus/client_go // Metrics collection
-- uber-go/zap          // High-performance logging
-- stretchr/testify     // Testing framework
+// Core Framework
+- gorilla/websocket              // WebSocket server implementation
+- gin-gonic/gin                  // HTTP router and middleware (lightweight)
+
+// GCP Integration
+- cloud.google.com/go/logging    // Cloud Logging integration
+- cloud.google.com/go/pubsub     // Pub/Sub client
+- cloud.google.com/go/secretmanager // Secret Manager client
+- contrib.go.opencensus.io/exporter/stackdriver // Cloud Monitoring & Trace
+
+// Data Layer
+- github.com/go-redis/redis/v8   // Redis client (Memorystore)
+- github.com/lib/pq              // PostgreSQL driver (Cloud SQL)
+- github.com/jackc/pgx/v5        // Alternative PostgreSQL driver with better performance
+
+// Observability
+- go.opencensus.io               // Distributed tracing and metrics
+- go.uber.org/zap                // Structured logging (Cloud Logging compatible)
+
+// Testing
+- github.com/stretchr/testify    // Testing framework
+- github.com/testcontainers/testcontainers-go // Integration testing
 ```
 
 ### 3.2 Real-Time Communication
@@ -203,56 +234,318 @@ The following components will be **mocked or simulated**:
 
 ### 3.3 Data Storage
 
-**Primary Database**: **PostgreSQL** (Mocked with in-memory option)
+**Primary Database**: **Cloud SQL for PostgreSQL** (Fully Managed)
 
 **Rationale**:
-- ACID compliance for score consistency
-- Rich querying for leaderboard calculations
-- JSON support for flexible schema
-- Proven at scale
+- **Fully Managed**: Automated backups, patching, high availability
+- **ACID Compliance**: Strong consistency for score integrity
+- **Rich Querying**: Advanced PostgreSQL features for leaderboard calculations
+- **JSONB Support**: Flexible schema for metadata and extensions
+- **High Availability**: Automatic failover with regional replicas
+- **Cloud SQL Proxy**: Secure connections without managing SSL certificates
+- **Connection Pooling**: Built-in connection pooler (PgBouncer)
+- **Proven at Scale**: Production-grade managed service
 
-**Caching Layer**: **Redis**
+**Configuration**:
+```yaml
+Instance Type: db-custom-2-7680 (2 vCPU, 7.5 GB RAM)
+Storage: SSD (100 GB with auto-expansion)
+Backups: Automated daily backups with point-in-time recovery
+HA: Regional instance with automatic failover
+Private IP: VPC-native for secure access from Cloud Run
+```
+
+**Caching Layer**: **Memorystore for Redis** (Fully Managed)
 
 **Rationale**:
-- In-memory speed for session state
-- Pub/Sub for cross-instance messaging
-- Leaderboard sorted sets (ZADD, ZRANGE)
-- TTL support for session expiry
-- Atomic operations for score updates
+- **Fully Managed**: Google-managed Redis with automatic failover
+- **In-Memory Speed**: Sub-millisecond latency for session state
+- **Pub/Sub Support**: Cross-instance messaging for distributed systems
+- **Sorted Sets**: Native leaderboard support (ZADD, ZRANGE)
+- **TTL Support**: Automatic session expiry and cleanup
+- **Atomic Operations**: Redis commands ensure score update consistency
+- **VPC Integration**: Private connectivity from Cloud Run instances
+- **High Availability**: Standard tier with automatic failover and replication
+
+**Configuration**:
+```yaml
+Tier: Standard (High Availability)
+Capacity: 5 GB
+Version: Redis 6.x
+Network: VPC with Private IP
+Replica: Automatic read replica for failover
+```
 
 ### 3.4 Message Broker
 
-**Pub/Sub**: **Redis Pub/Sub**
+**Pub/Sub**: **Cloud Pub/Sub** (Primary) + **Redis Pub/Sub** (Local Broadcast)
 
-**Rationale**:
-- Simple integration with Redis cache
-- Low latency for local deployments
-- Sufficient for moderate scale
-- Easy to upgrade to Kafka/RabbitMQ later
+**Cloud Pub/Sub Rationale**:
+- **Fully Managed**: Google-managed message queue with global availability
+- **Scalability**: Automatically scales to handle millions of messages per second
+- **At-Least-Once Delivery**: Guaranteed message delivery with acknowledgments
+- **Dead Letter Topics**: Automatic handling of failed messages
+- **Message Retention**: Configurable retention (up to 7 days)
+- **Push/Pull Subscriptions**: Flexible consumption patterns
+- **Global Ordering**: Optional ordering keys for sequential processing
+- **Integration**: Native integration with Cloud Run, Cloud Functions
+- **Cost-Effective**: Pay only for what you use
 
-### 3.5 Monitoring & Observability
+**Architecture**:
+```yaml
+Topics:
+  - quiz-events-topic          # All quiz-related events
+  - session-events-topic       # Session lifecycle events
+  - score-updates-topic        # Real-time score updates
+  - leaderboard-updates-topic  # Leaderboard recalculation triggers
 
-**Metrics**: **Prometheus** + **Grafana**
+Subscriptions:
+  - quiz-server-sub (Pull)     # Cloud Run instances pull events
+  - analytics-sub (Push)       # Push to analytics service
+  - dead-letter-sub            # Failed message handling
 
-**Logging**: **Uber Zap** (structured JSON logs)
+Configuration:
+  - Acknowledgement Deadline: 60 seconds
+  - Message Retention: 24 hours
+  - Retry Policy: Exponential backoff (min: 10s, max: 600s)
+```
 
-**Tracing**: **OpenTelemetry** (basic implementation)
+**Redis Pub/Sub Usage** (Complementary):
+- **Local Broadcast**: Fast, in-memory messaging within same region
+- **WebSocket Notifications**: Immediate client notifications from same instance
+- **Session-Scoped Events**: Events that don't need global distribution
+- **Low-Latency Use Cases**: Sub-10ms message propagation
 
-**Health Checks**: **Custom /health endpoint**
+**Hybrid Strategy**:
+1. **Cloud Pub/Sub**: Cross-region events, durable messaging, service-to-service
+2. **Redis Pub/Sub**: Same-region WebSocket broadcasts, ephemeral notifications
+
+### 3.5 Monitoring & Observability (GCP Stack)
+
+**Logging**: **Cloud Logging** (formerly Stackdriver Logging)
+
+**Integration**:
+```go
+import (
+    "cloud.google.com/go/logging"
+    "go.uber.org/zap"
+)
+
+// Structured logging with Cloud Logging integration
+logger, _ := zap.NewProduction()
+cloudLogger, _ := logging.NewClient(ctx, projectID)
+```
+
+**Features**:
+- **Structured Logging**: JSON format with automatic field extraction
+- **Log Levels**: DEBUG, INFO, WARNING, ERROR, CRITICAL
+- **Correlation**: Automatic trace correlation with Cloud Trace
+- **Log-based Metrics**: Create metrics from log patterns
+- **Retention**: Configurable retention (30 days default, up to 3650 days)
+- **Export**: BigQuery integration for analytics
+
+**Metrics**: **Cloud Monitoring** (formerly Stackdriver Monitoring)
+
+**Implementation**:
+```go
+import "contrib.go.opencensus.io/exporter/stackdriver"
+
+// OpenCensus integration
+exporter, _ := stackdriver.NewExporter(stackdriver.Options{
+    ProjectID: projectID,
+})
+view.RegisterExporter(exporter)
+```
+
+**Custom Metrics**:
+```yaml
+Application Metrics:
+  - websocket_active_connections
+  - websocket_messages_per_second
+  - quiz_sessions_active
+  - answer_submission_latency_ms
+  - leaderboard_update_latency_ms
+  - score_calculation_duration_ms
+  
+GCP Metrics (Automatic):
+  - Cloud Run: Request count, latency, CPU, memory
+  - Cloud SQL: Connections, queries/sec, replication lag
+  - Memorystore: Operations/sec, memory usage, cache hits
+  - Cloud Pub/Sub: Message publish/delivery rates, latency
+```
+
+**Dashboards**:
+- **Real-Time Operations**: Active connections, message throughput
+- **Performance**: Latency percentiles (P50, P95, P99), error rates
+- **Resource Usage**: CPU, memory, network per service
+- **Business Metrics**: Quiz sessions, participants, answer rates
+
+**Tracing**: **Cloud Trace** (formerly Stackdriver Trace)
+
+**Implementation**:
+```go
+import (
+    "go.opencensus.io/trace"
+    "contrib.go.opencensus.io/exporter/stackdriver"
+)
+
+// Distributed tracing setup
+trace.ApplyConfig(trace.Config{
+    DefaultSampler: trace.ProbabilitySampler(0.1), // 10% sampling
+})
+```
+
+**Trace Coverage**:
+- WebSocket connection lifecycle
+- Answer submission → score calculation → leaderboard update
+- Database queries (Cloud SQL)
+- Cache operations (Memorystore)
+- Pub/Sub message publishing and consumption
+- External API calls
+
+**Health Checks**: **Cloud Run Native Health Checks**
+
+```go
+// Liveness probe
+GET /health/live
+Response: 200 OK if process is running
+
+// Readiness probe  
+GET /health/ready
+Response: 200 OK if:
+  - Cloud SQL connection pool healthy
+  - Memorystore Redis connection active
+  - Pub/Sub client initialized
+  - Memory usage < 90%
+```
+
+**Alerting Policies**:
+```yaml
+Critical Alerts (PagerDuty):
+  - Error rate > 1% for 5 minutes
+  - P99 latency > 500ms for 5 minutes  
+  - Cloud SQL connection pool exhausted
+  - Memorystore unavailable
+  - Cloud Run instance crash rate > 10%
+  
+Warning Alerts (Email/Slack):
+  - Error rate > 0.5% for 10 minutes
+  - Memory usage > 80%
+  - Active connections > 8000 per instance
+  - Cloud SQL slow queries > 1s
+  - Pub/Sub message age > 5 minutes
+```
+
+**Error Reporting**: **Cloud Error Reporting**
+
+- Automatic error grouping and deduplication
+- Stack trace analysis
+- Error rate trends
+- Integration with Cloud Logging
 
 ### 3.6 Development & Testing
 
 **Testing**: 
-- Unit tests: Go testing package + testify
-- Integration tests: Testcontainers for Redis/PostgreSQL
-- Load testing: k6 or Artillery
+- **Unit Tests**: Go testing package + testify
+- **Integration Tests**: Testcontainers for Redis/PostgreSQL
+- **Load Testing**: k6 or Artillery for performance validation
+- **GCP Integration Tests**: Use GCP emulators (Pub/Sub, Datastore)
 
-**Containerization**: **Docker** + **Docker Compose**
+**Containerization**: **Docker** + **Cloud Build**
+
+```dockerfile
+# Dockerfile optimized for Cloud Run
+FROM golang:1.21-alpine AS builder
+WORKDIR /app
+COPY go.* ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o /quiz-server ./cmd/server
+
+FROM gcr.io/distroless/base-debian11
+COPY --from=builder /quiz-server /quiz-server
+EXPOSE 8080
+ENTRYPOINT ["/quiz-server"]
+```
+
+**Local Development**: 
+```yaml
+# docker-compose.yml for local development
+version: '3.8'
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+  
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: quiz_db
+      POSTGRES_PASSWORD: dev_password
+    ports:
+      - "5432:5432"
+  
+  pubsub-emulator:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud beta emulators pubsub start --host-port=0.0.0.0:8085
+    ports:
+      - "8085:8085"
+```
+
+**CI/CD Pipeline**: **Cloud Build**
+
+```yaml
+# cloudbuild.yaml
+steps:
+  # Run tests
+  - name: 'golang:1.21'
+    entrypoint: 'go'
+    args: ['test', '-v', '-race', '-coverprofile=coverage.out', './...']
+  
+  # Build container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/quiz-server:$COMMIT_SHA'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/quiz-server:latest'
+      - '.'
+  
+  # Push to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', '--all-tags', 'gcr.io/$PROJECT_ID/quiz-server']
+  
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'quiz-server'
+      - '--image=gcr.io/$PROJECT_ID/quiz-server:$COMMIT_SHA'
+      - '--region=us-central1'
+      - '--platform=managed'
+      - '--allow-unauthenticated'
+      - '--set-env-vars=ENV=production'
+
+images:
+  - 'gcr.io/$PROJECT_ID/quiz-server:$COMMIT_SHA'
+  - 'gcr.io/$PROJECT_ID/quiz-server:latest'
+
+options:
+  machineType: 'N1_HIGHCPU_8'
+  logging: CLOUD_LOGGING_ONLY
+```
 
 **Code Quality**: 
-- golangci-lint (static analysis)
-- gofmt (formatting)
-- go vet (error checking)
+- **golangci-lint**: Static analysis (runs in Cloud Build)
+- **gofmt**: Code formatting enforcement
+- **go vet**: Error detection
+- **Cloud Build**: Automated testing and security scanning
+- **Container Analysis**: Vulnerability scanning for container images
+- **Secret Detection**: Prevent credential commits
 
 ---
 
@@ -962,83 +1255,216 @@ Response: 201 Created
 
 ---
 
-## 8. Scalability Design
+## 8. Scalability Design (GCP-Native)
 
-### 8.1 Horizontal Scaling
+### 8.1 Horizontal Scaling with Cloud Run
 
-**Strategy**: Stateless server instances + centralized state
+**Strategy**: Serverless containers with automatic scaling
 
-**Components**:
+**Cloud Run Auto-Scaling Configuration**:
+```yaml
+Service: quiz-server
+Min Instances: 1              # Always warm (avoid cold starts)
+Max Instances: 100            # Scale up to 100 instances
+Concurrency: 80               # Max concurrent requests per instance
+CPU: 2 vCPU                   # Per instance
+Memory: 4 GiB                 # Per instance
+Timeout: 300s                 # WebSocket connection timeout
 
-1. **Load Balancer**
-   - Sticky sessions for WebSocket connections
-   - Health check integration
-   - Round-robin for new connections
+Auto-Scaling Triggers:
+  - Request Rate: Scale when request/sec > 60 per instance
+  - CPU Utilization: Scale when CPU > 70%
+  - Concurrent Connections: Scale when connections > 5000
+  - Custom Metric: Active WebSocket connections
 
-2. **Server Instances**
-   - Completely stateless
-   - All state in Redis/PostgreSQL
-   - Auto-scaling based on connection count
+Scaling Characteristics:
+  - Scale-up time: ~30 seconds (warm instances)
+  - Scale-down time: ~5 minutes idle
+  - Cold start time: ~2 seconds (Go binary)
+```
 
-3. **Redis Cluster**
-   - Master-slave replication
-   - Sentinel for failover
-   - Cluster mode for partitioning
+**Advantages**:
+- **Zero Infrastructure Management**: Google manages scaling, patching, availability
+- **Pay-per-Use**: Only pay for request processing time
+- **Global Load Balancing**: Automatic traffic distribution
+- **Fast Scaling**: Instances spin up in seconds
+- **Session Affinity**: Sticky sessions for WebSocket connections
 
-4. **PostgreSQL**
-   - Read replicas for analytics
-   - Connection pooling
-   - Partitioning by session_id
-
-**Scaling Triggers**:
-- Scale out: >5000 connections per instance
-- Scale in: <1000 connections per instance
-- Target: 70% resource utilization
-
-### 8.2 Session Affinity
+### 8.2 WebSocket Session Affinity
 
 **Problem**: WebSocket connections are stateful at transport layer
 
-**Solution**:
-- Load balancer uses sticky sessions (based on client IP or session cookie)
-- Connection state stored in Redis allows cross-instance failover
-- Pub/Sub ensures messages reach correct instance
+**GCP Solution**: Cloud Load Balancer with Session Affinity
+```yaml
+Load Balancer Configuration:
+  Type: HTTPS Load Balancer (Global)
+  Backend Service: Cloud Run (quiz-server)
+  Session Affinity: 
+    Type: Generated Cookie
+    Cookie TTL: 3600 seconds (1 hour)
+    Affinity: Client IP + Cookie
+  
+  WebSocket Support:
+    Enabled: true
+    Idle Timeout: 600 seconds (10 minutes)
+    Backend Timeout: 600 seconds
+  
+  Health Check:
+    Path: /health/ready
+    Interval: 10 seconds
+    Timeout: 5 seconds
+    Healthy Threshold: 2
+    Unhealthy Threshold: 3
+```
 
 **Failover Process**:
-1. Instance failure detected by load balancer
-2. Client reconnects to different instance
-3. New instance retrieves session state from Redis
-4. Client resumes with minimal disruption
+1. Instance failure detected by load balancer health check
+2. Client WebSocket connection drops
+3. Client reconnects (automatic retry with exponential backoff)
+4. Load balancer routes to healthy instance
+5. Server retrieves session state from Memorystore
+6. Client resumes with minimal disruption (<2 seconds total)
 
-### 8.3 Database Scaling
+### 8.3 Database Scaling (Cloud SQL)
 
 **Write Path**:
-- Async writes to PostgreSQL (non-critical)
-- Write-through cache to Redis
-- Batch inserts for answer submissions
+- **Cloud SQL Proxy**: Connection pooling and secure access
+- **Connection Pool**: 25 connections per Cloud Run instance
+- **Async Writes**: Non-critical writes queued via Cloud Tasks
+- **Write-Through Cache**: Memorystore for hot data
+
+```yaml
+Cloud SQL Configuration:
+  Tier: db-custom-4-15360 (4 vCPU, 15 GB RAM)
+  Storage: 100 GB SSD (auto-expand to 500 GB)
+  Availability: Regional (automatic failover)
+  
+  Read Replicas:
+    - Region: us-central1 (same as primary)
+    - Lag: <1 second
+    - Use Case: Analytics queries, reporting
+  
+  Connection Pooling:
+    Max Connections: 500
+    Per-Instance Limit: 25
+    Idle Timeout: 300 seconds
+```
 
 **Read Path**:
-- Redis cache for hot data (sessions, leaderboards)
-- Read replicas for analytics queries
-- Cache hit ratio target: >95%
+- **Memorystore Cache**: >95% cache hit ratio target
+- **Read Replicas**: Offload analytics and reporting queries
+- **Query Optimization**: Prepared statements, indexes
 
 **Partitioning Strategy**:
-- Partition by `session_id` (hash-based)
+- Partition by `session_id` hash for horizontal sharding (future)
+- Time-based partitioning for `answer_submissions` table
 - Each partition handles subset of sessions
-- Enables horizontal sharding
 
-### 8.4 Message Broker Scaling
+### 8.4 Memorystore Scaling
 
-**Current**: Redis Pub/Sub (single instance)
+```yaml
+Memorystore Configuration:
+  Tier: Standard (HA with automatic failover)
+  Current Capacity: 5 GB
+  Scaling Path:
+    - 5 GB: ~10K concurrent sessions
+    - 20 GB: ~50K concurrent sessions
+    - 100 GB: ~250K concurrent sessions
+  
+  Replica: Read replica (automatic)
+  Persistence: RDB snapshots every 6 hours
+  Eviction Policy: allkeys-lru
+  Max Clients: 10,000 connections
+```
 
-**Future**: Kafka/RabbitMQ for higher scale
-- Topic per session or partition by session_id
-- Consumer groups for parallel processing
-- Message persistence and replay
+**Scaling Triggers**:
+- Memory usage > 80%: Increase capacity
+- Operations/sec > 80K: Add read replicas or upgrade tier
+- Connection count > 8K: Review connection pooling
 
-**Capacity Planning**:
-- Redis Pub/Sub: ~50K messages/second
-- Kafka: ~500K messages/second (if needed)
+### 8.5 Cloud Pub/Sub Scaling
+
+**Capacity**:
+- **Throughput**: Automatically scales to millions of messages/sec
+- **Storage**: Up to 10 GB message retention per topic
+- **Subscriptions**: 10,000 subscriptions per topic
+- **Global**: Multi-region message distribution
+
+**Performance**:
+```yaml
+Message Throughput:
+  - Publishing: 100K messages/sec (per topic)
+  - Delivery: 100K messages/sec (per subscription)
+  - Latency: <100ms publish-to-delivery (same region)
+  - Latency: <500ms publish-to-delivery (cross-region)
+
+Scaling Configuration:
+  - Auto-scaling: Enabled (default)
+  - Partitions: Automatic based on load
+  - Ordering: Optional per ordering key
+```
+
+### 8.6 Capacity Planning
+
+**Target Load**:
+- 10,000 concurrent WebSocket connections
+- 100 active quiz sessions
+- 100 participants per session average
+- 10 answers/minute per participant
+- Total: 100K answer submissions/hour
+
+**Resource Estimates**:
+```yaml
+Cloud Run:
+  Instances: 20-30 (at peak)
+  Total vCPU: 40-60
+  Total Memory: 80-120 GB
+  Cost: ~$200-300/month (pay-per-use)
+
+Cloud SQL:
+  Instance: db-custom-4-15360
+  Storage: 150 GB
+  Cost: ~$350/month
+
+Memorystore:
+  Capacity: 20 GB (Standard tier)
+  Cost: ~$150/month
+
+Cloud Pub/Sub:
+  Messages: 300M messages/month
+  Cost: ~$120/month
+
+Cloud Load Balancer:
+  Forwarding Rules: 1
+  Data Processed: 500 GB/month
+  Cost: ~$50/month
+
+Total Estimated Cost: ~$870/month (at target load)
+```
+
+### 8.7 Multi-Region Deployment (Future)
+
+**Phase 1** (Current): Single Region (us-central1)
+**Phase 2** (Future): Multi-Region for Global Users
+
+```yaml
+Regions:
+  Primary: us-central1 (Iowa)
+  Secondary: europe-west1 (Belgium)
+  Tertiary: asia-northeast1 (Tokyo)
+
+Deployment:
+  - Cloud Run: Deployed to all 3 regions
+  - Cloud Load Balancer: Global load balancing with geo-routing
+  - Cloud SQL: Regional instances with cross-region replicas
+  - Memorystore: Regional instances (no cross-region replication)
+  - Pub/Sub: Global topics with regional subscriptions
+
+Data Consistency:
+  - Eventually consistent across regions
+  - Strong consistency within region
+  - Session affinity to nearest region
+```
 
 ---
 
@@ -1340,68 +1766,801 @@ Checks:
 
 ---
 
-## 12. Security Considerations
+## 12. Security Considerations (GCP-Native)
 
-### 12.1 Input Validation
+### 12.1 Network Security
 
-**WebSocket Messages**:
-- JSON schema validation
-- Maximum message size: 10KB
-- Rate limiting: 100 messages/second per user
-- Sanitize user inputs (username, answers)
-
-**SQL Injection Prevention**:
-- Parameterized queries only
-- No dynamic SQL construction
-- ORM with prepared statements
-
-### 12.2 Authentication (Simplified for Challenge)
-
-**Current Approach** (Mocked):
-- User ID passed as query parameter
-- No real authentication
-- Session tokens generated server-side
-
-**Production Recommendations**:
-- JWT tokens for authentication
-- OAuth 2.0 / OpenID Connect
-- Secure WebSocket (WSS) only
-- CORS configuration
-
-### 12.3 Rate Limiting
-
-**Per-User Limits**:
-- WebSocket messages: 100/second
-- Answer submissions: 10/second (prevent spam)
-- Session joins: 5/minute
-
-**Per-Session Limits**:
-- Maximum participants: 10,000
-- Maximum duration: 2 hours
-- Auto-cleanup after expiry
-
-**Implementation**:
-```go
-// Token bucket algorithm in Redis
-key: rate_limit:{user_id}
-tokens: 100
-refill_rate: 100/second
+**VPC and Private Services**:
+```yaml
+VPC Configuration:
+  - VPC Name: quiz-app-vpc
+  - Subnets: 
+      - Cloud Run: Serverless VPC Access Connector
+      - Cloud SQL: Private IP only (no public IP)
+      - Memorystore: VPC-native (private IP)
+  - Firewall Rules:
+      - Deny all ingress by default
+      - Allow HTTPS (443) from Cloud Load Balancer
+      - Allow internal traffic between services
+  - Private Google Access: Enabled
 ```
 
-### 12.4 Data Privacy
+**Cloud Armor (DDoS Protection)**:
+```yaml
+Security Policies:
+  - Rate Limiting:
+      - 100 requests/minute per IP
+      - 1000 requests/minute per user
+  - Geographic Restrictions:
+      - Allow: Global (configurable)
+      - Block: Known malicious IPs (Google threat intelligence)
+  - OWASP Top 10 Protection:
+      - SQL Injection: Enabled
+      - Cross-Site Scripting (XSS): Enabled
+      - Layer 7 DDoS: Enabled
+  - Bot Management:
+      - Challenge suspicious traffic
+      - Block known bad bots
+```
 
-**Personal Data**:
-- Minimal data collection (user_id, username)
-- No sensitive information stored
-- Session data TTL (auto-delete after 24 hours)
+**SSL/TLS**:
+- **Google-Managed Certificates**: Automatic provisioning and renewal
+- **TLS 1.3**: Enforced minimum version
+- **HTTPS Only**: HTTP redirects to HTTPS
+- **WebSocket Secure (WSS)**: Encrypted WebSocket connections
+
+### 12.2 Identity and Access Management (IAM)
+
+**Service Accounts** (Principle of Least Privilege):
+```yaml
+Service Accounts:
+  quiz-server@project.iam.gserviceaccount.com:
+    Roles:
+      - Cloud SQL Client (cloudsql.client)
+      - Pub/Sub Publisher (pubsub.publisher)
+      - Pub/Sub Subscriber (pubsub.subscriber)
+      - Secret Manager Secret Accessor (secretmanager.secretAccessor)
+      - Logging Writer (logging.logWriter)
+      - Monitoring Metric Writer (monitoring.metricWriter)
+      - Cloud Trace Agent (cloudtrace.agent)
+    Scope: Cloud Run service only
+  
+  cloud-build@project.iam.gserviceaccount.com:
+    Roles:
+      - Cloud Run Admin (run.admin)
+      - Artifact Registry Writer (artifactregistry.writer)
+      - Service Account User (iam.serviceAccountUser)
+    Scope: Cloud Build only
+  
+  analytics@project.iam.gserviceaccount.com:
+    Roles:
+      - Cloud SQL Client (read-only)
+      - BigQuery Data Editor (bigquery.dataEditor)
+    Scope: Analytics pipeline only
+```
+
+**Workload Identity** (No Service Account Keys):
+```yaml
+# Cloud Run uses Workload Identity to access GCP services
+# No JSON key files needed - automatic token exchange
+Service: quiz-server
+Service Account: quiz-server@project.iam.gserviceaccount.com
+Workload Identity: Enabled
+```
+
+### 12.3 Secrets Management
+
+**Secret Manager Integration**:
+```go
+import "cloud.google.com/go/secretmanager/apiv1"
+
+// Access secrets at runtime (never in code or env vars)
+func getSecret(ctx context.Context, secretName string) (string, error) {
+    client, _ := secretmanager.NewClient(ctx)
+    name := fmt.Sprintf("projects/%s/secrets/%s/versions/latest", projectID, secretName)
+    result, _ := client.AccessSecretVersion(ctx, &secretmanagerpb.AccessSecretVersionRequest{
+        Name: name,
+    })
+    return string(result.Payload.Data), nil
+}
+```
+
+**Secrets Stored in Secret Manager**:
+```yaml
+Secrets:
+  - db-password          # Cloud SQL password
+  - redis-auth-token     # Memorystore AUTH token (if enabled)
+  - jwt-signing-key      # For user authentication tokens
+  - api-keys             # Third-party API keys
+  - encryption-key       # Data encryption key
+
+Configuration:
+  - Automatic Rotation: Enabled (90 days)
+  - Version History: Last 10 versions retained
+  - Access Audit: Cloud Audit Logs
+  - Replication: Automatic (multi-region)
+```
+
+### 12.4 Input Validation and Sanitization
+
+**WebSocket Messages**:
+```go
+// JSON schema validation
+type SubmitAnswerPayload struct {
+    SessionID  string `json:"session_id" validate:"required,uuid"`
+    QuestionID string `json:"question_id" validate:"required,uuid"`
+    Answer     string `json:"answer" validate:"required,max=1000"`
+    TimeTaken  int    `json:"time_taken_ms" validate:"required,min=0,max=300000"`
+}
+
+// Validation
+validator := validator.New()
+err := validator.Struct(payload)
+
+// Maximum message size: 10KB
+const MaxMessageSize = 10 * 1024
+
+// Rate limiting: 100 messages/second per user
+// Implemented via Cloud Armor or application-level token bucket
+```
+
+**SQL Injection Prevention**:
+```go
+// Always use parameterized queries
+stmt := `INSERT INTO participants (session_id, user_id, username) VALUES ($1, $2, $3)`
+_, err := db.ExecContext(ctx, stmt, sessionID, userID, username)
+
+// Use pgx for better prepared statement support
+```
+
+**XSS Prevention**:
+- Sanitize all user inputs (usernames, answers)
+- Use Content Security Policy (CSP) headers
+- Encode output when rendering user-generated content
+
+### 12.5 Authentication & Authorization
+
+**Current Approach** (MVP - Simplified):
+```go
+// Simple user ID validation
+// Production requires proper auth
+userID := r.URL.Query().Get("user_id")
+if !isValidUUID(userID) {
+    return errors.New("invalid user ID")
+}
+```
+
+**Production Approach** (Recommended):
+```yaml
+Authentication:
+  Provider: Firebase Authentication or Identity Platform
+  Methods:
+    - Email/Password
+    - Google OAuth
+    - Social Logins (Facebook, Twitter)
+  
+  Token Validation:
+    - JWT tokens with Cloud Endpoints
+    - Token verification via Firebase Admin SDK
+    - Short-lived tokens (1 hour)
+    - Refresh token rotation
+
+Authorization:
+  - Role-based access control (RBAC)
+  - Session ownership verification
+  - Quiz access permissions
+  - Admin vs participant roles
+```
+
+### 12.6 Data Protection
 
 **Encryption**:
-- TLS/SSL for all connections (WSS)
-- At-rest encryption for database (production)
+```yaml
+Encryption at Rest:
+  - Cloud SQL: Google-managed encryption (AES-256)
+  - Memorystore: Google-managed encryption
+  - Cloud Storage: Customer-managed encryption keys (CMEK) optional
+  - Secret Manager: Automatic encryption
+
+Encryption in Transit:
+  - All traffic: TLS 1.3
+  - Internal services: Automatic TLS (mTLS with service mesh)
+  - Database connections: SSL/TLS enforced
+```
+
+**Data Retention & Privacy**:
+```yaml
+Data Classification:
+  - Public: Quiz content, leaderboards
+  - Internal: Session data, scores
+  - Confidential: User emails, personal info (if collected)
+
+Retention Policies:
+  - Active Sessions: Duration + 24 hours
+  - Completed Sessions: 90 days (configurable)
+  - User Data: Account lifetime + 30 days after deletion
+  - Audit Logs: 400 days (compliance requirement)
+  - Access Logs: 30 days
+
+GDPR Compliance:
+  - Right to Access: Export user data API
+  - Right to Erasure: User deletion workflow
+  - Data Portability: JSON export
+  - Consent Management: Cookie consent, ToS acceptance
+```
+
+### 12.7 Security Monitoring & Auditing
+
+**Cloud Audit Logs**:
+```yaml
+Audit Log Types:
+  - Admin Activity: All administrative actions (enabled by default)
+  - Data Access: Database queries, secret access (enabled)
+  - System Events: Service lifecycle events
+  - Policy Denied: Failed authorization attempts
+
+Log Retention: 400 days
+Log Export: BigQuery for long-term analysis
+```
+
+**Security Command Center**:
+- Vulnerability scanning for container images
+- Misconfiguration detection
+- Threat detection (anomalous activity)
+- Compliance monitoring (CIS benchmarks)
+
+**Anomaly Detection**:
+```yaml
+Alerts:
+  - Unusual API access patterns
+  - Failed authentication spike (>10 failures/minute)
+  - Privilege escalation attempts
+  - Data exfiltration indicators
+  - Resource usage anomalies
+  - Geographic anomalies (login from unexpected location)
+```
+
+### 12.8 Incident Response
+
+**Security Incident Playbook**:
+1. **Detection**: Security Command Center alert or Cloud Monitoring
+2. **Isolation**: Revoke compromised service account, block IPs
+3. **Investigation**: Review Cloud Audit Logs, analyze traffic
+4. **Containment**: Deploy firewall rules, rotate secrets
+5. **Recovery**: Restore from backups if needed
+6. **Post-Mortem**: Document incident, update security policies
+
+**Backup & Recovery**:
+```yaml
+Cloud SQL Backups:
+  - Automated daily backups: Retained 7 days
+  - On-demand backups: Before major changes
+  - Point-in-time recovery: Up to 7 days
+  - Cross-region backup: Enabled (disaster recovery)
+
+Memorystore Backups:
+  - RDB snapshots: Every 6 hours
+  - Export to Cloud Storage: Daily
+  - Retention: 7 days
+```
 
 ---
 
-## 13. Implementation Plan
+## 14. Cost Optimization (GCP)
+
+### 14.1 Cost Breakdown (Production)
+
+```yaml
+Monthly Cost Estimate (10K concurrent connections):
+
+Cloud Run:
+  - Instance Hours: 720 hours/month * 20 instances = 14,400 hours
+  - vCPU: 14,400 hours * 2 vCPU * $0.00002400/vCPU-hour = $691
+  - Memory: 14,400 hours * 4 GiB * $0.00000250/GiB-hour = $144
+  - Requests: 100M requests * $0.40/million = $40
+  - Subtotal: ~$875/month
+
+Cloud SQL (PostgreSQL):
+  - Instance: db-custom-4-15360 = $280/month
+  - Storage: 150 GB SSD * $0.17/GB = $25.50/month
+  - Backups: 150 GB * $0.08/GB = $12/month
+  - Read Replica: $280/month (if enabled)
+  - Subtotal: ~$317/month (without replica)
+
+Memorystore for Redis:
+  - Standard Tier: 20 GB * $0.054/GB-hour * 730 hours = $788/month
+  - Subtotal: ~$788/month
+
+Cloud Pub/Sub:
+  - Message Throughput: 300M messages * $40/TB = ~$120/month
+  - Subtotal: ~$120/month
+
+Cloud Load Balancing:
+  - Forwarding Rules: 1 * $18/month = $18/month
+  - Data Processed: 500 GB * $0.008/GB = $4/month
+  - Subtotal: ~$22/month
+
+Cloud Logging:
+  - Ingestion: 50 GB/month (first 50 GB free)
+  - Storage: 100 GB * $0.01/GB = $1/month
+  - Subtotal: ~$1/month
+
+Cloud Monitoring:
+  - Metrics: Included (first 150 MB/month free)
+  - Subtotal: $0/month
+
+Cloud Trace:
+  - Traces: 10M spans/month (first 2.5M free) = $0.20/million * 7.5M = $1.50/month
+  - Subtotal: ~$2/month
+
+Total Estimated Cost: ~$2,125/month
+```
+
+### 14.2 Cost Optimization Strategies
+
+**1. Cloud Run Optimizations**:
+```yaml
+Strategies:
+  - Right-size instances: Monitor actual CPU/memory usage
+  - Adjust min instances: Set to 1-2 instead of 0 to avoid cold starts
+  - Optimize concurrency: Tune containerConcurrency based on load
+  - Request batching: Batch Pub/Sub message processing
+  - Connection pooling: Reuse database connections
+  
+Potential Savings: 20-30% ($175-260/month)
+```
+
+**2. Cloud SQL Optimizations**:
+```yaml
+Strategies:
+  - Use connection pooling: Reduce instance size
+  - Enable query insights: Identify and optimize slow queries
+  - Implement caching: Reduce database load with Memorystore
+  - Archive old data: Export to BigQuery for analytics
+  - Scheduled scaling: Reduce size during off-peak hours
+  
+Potential Savings: 15-25% ($47-79/month)
+```
+
+**3. Memorystore Optimizations**:
+```yaml
+Strategies:
+  - Monitor memory usage: Right-size capacity
+  - Implement eviction policies: allkeys-lru to auto-remove old data
+  - Data compression: Use Redis compression for large values
+  - TTL optimization: Aggressive TTLs for session data
+  - Basic tier for dev/staging: No replica needed
+  
+Potential Savings: 10-20% ($79-158/month)
+```
+
+**4. Committed Use Discounts**:
+```yaml
+Commitments (1-year):
+  - Cloud Run: 37% discount on vCPU and memory
+  - Cloud SQL: 30% discount on instance costs
+  - Memorystore: 30% discount
+  
+Total Savings with Commitments: ~$600/month (28%)
+Recommendation: Apply after 3 months of stable production usage
+```
+
+**5. Development Environment Auto-Shutdown**:
+```yaml
+Scheduled Scaling:
+  - Weekdays: Scale up at 8 AM, down at 6 PM
+  - Weekends: Keep minimal instances
+  - Cloud Scheduler: Trigger scaling via Cloud Run API
+  
+Potential Savings: $100-150/month on dev environment
+```
+
+### 14.3 Budget Alerts
+
+```yaml
+Cloud Billing Budgets:
+  Development:
+    Budget: $100/month
+    Alerts:
+      - 50% threshold: Email to team
+      - 90% threshold: Email to team lead
+      - 100% threshold: Email + Slack + consider auto-shutdown
+  
+  Staging:
+    Budget: $500/month
+    Alerts:
+      - 80% threshold: Email to team
+      - 100% threshold: Email + Slack
+  
+  Production:
+    Budget: $2,500/month
+    Alerts:
+      - 80% threshold: Email to team lead
+      - 100% threshold: Email + PagerDuty
+      - 120% threshold: Investigate anomaly
+```
+
+### 14.4 Cost Monitoring Dashboard
+
+```yaml
+Metrics to Track:
+  - Cost per 1,000 requests
+  - Cost per active user
+  - Cost per quiz session
+  - Cloud Run instance utilization (%)
+  - Database connection pool usage (%)
+  - Cache hit rate (%)
+  - Pub/Sub message volume
+  
+Review Frequency:
+  - Daily: Automated cost anomaly detection
+  - Weekly: Team review of cost trends
+  - Monthly: Management cost review and optimization planning
+```
+
+## 15. Implementation Planture (GCP Cloud Run)
+
+### 13.1 Cloud Run Deployment
+
+**Service Configuration**:
+```yaml
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: quiz-server
+  namespace: default
+  labels:
+    app: quiz-server
+    env: production
+spec:
+  template:
+    metadata:
+      annotations:
+        # Auto-scaling
+        autoscaling.knative.dev/minScale: "1"
+        autoscaling.knative.dev/maxScale: "100"
+        autoscaling.knative.dev/target: "80"
+        
+        # Networking
+        run.googleapis.com/vpc-access-connector: quiz-vpc-connector
+        run.googleapis.com/vpc-access-egress: private-ranges-only
+        
+        # Observability
+        run.googleapis.com/execution-environment: gen2
+        
+    spec:
+      serviceAccountName: quiz-server@project-id.iam.gserviceaccount.com
+      containerConcurrency: 80
+      timeoutSeconds: 300
+      
+      containers:
+      - image: gcr.io/project-id/quiz-server:latest
+        ports:
+        - name: http1
+          containerPort: 8080
+        
+        resources:
+          limits:
+            cpu: "2000m"
+            memory: "4Gi"
+        
+        env:
+        - name: ENV
+          value: "production"
+        - name: PROJECT_ID
+          value: "project-id"
+        - name: CLOUD_SQL_CONNECTION
+          value: "project-id:us-central1:quiz-db"
+        - name: REDIS_HOST
+          valueFrom:
+            secretKeyRef:
+              name: redis-host
+              key: host
+        - name: REDIS_PORT
+          value: "6379"
+        
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+```
+
+### 13.2 Infrastructure as Code (Terraform)
+
+**Project Structure**:
+```
+terraform/
+├── environments/
+│   ├── dev/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── terraform.tfvars
+│   ├── staging/
+│   │   ├── main.tf
+│   │   ├── variables.tf
+│   │   └── terraform.tfvars
+│   └── production/
+│       ├── main.tf
+│       ├── variables.tf
+│       └── terraform.tfvars
+├── modules/
+│   ├── cloud-run/
+│   ├── cloud-sql/
+│   ├── memorystore/
+│   ├── pubsub/
+│   ├── vpc/
+│   └── monitoring/
+└── backend.tf
+```
+
+**Example Module** (Cloud Run):
+```hcl
+# modules/cloud-run/main.tf
+resource "google_cloud_run_service" "quiz_server" {
+  name     = var.service_name
+  location = var.region
+  project  = var.project_id
+
+  template {
+    spec {
+      service_account_name = google_service_account.quiz_server.email
+      container_concurrency = 80
+      timeout_seconds = 300
+
+      containers {
+        image = var.container_image
+        
+        resources {
+          limits = {
+            cpu    = "2000m"
+            memory = "4Gi"
+          }
+        }
+
+        env {
+          name  = "CLOUD_SQL_CONNECTION"
+          value = google_sql_database_instance.quiz_db.connection_name
+        }
+      }
+    }
+
+    metadata {
+      annotations = {
+        "autoscaling.knative.dev/minScale" = "1"
+        "autoscaling.knative.dev/maxScale" = "100"
+        "run.googleapis.com/vpc-access-connector" = google_vpc_access_connector.connector.id
+      }
+    }
+  }
+
+  traffic {
+    percent         = 100
+    latest_revision = true
+  }
+}
+
+resource "google_cloud_run_service_iam_member" "public_access" {
+  service  = google_cloud_run_service.quiz_server.name
+  location = google_cloud_run_service.quiz_server.location
+  role     = "roles/run.invoker"
+  member   = "allUsers"
+}
+```
+
+### 13.3 Environment Strategy
+
+**Development Environment**:
+```yaml
+Region: us-central1
+Cloud Run:
+  Min Instances: 0 (allow cold starts)
+  Max Instances: 5
+  CPU: 1 vCPU
+  Memory: 2 GiB
+
+Cloud SQL:
+  Tier: db-f1-micro
+  Storage: 10 GB
+  High Availability: Disabled
+  Backups: 3 days retention
+
+Memorystore:
+  Tier: Basic (no replica)
+  Capacity: 1 GB
+
+Cost: ~$50/month
+```
+
+**Staging Environment**:
+```yaml
+Region: us-central1
+Cloud Run:
+  Min Instances: 1
+  Max Instances: 20
+  CPU: 2 vCPU
+  Memory: 4 GiB
+
+Cloud SQL:
+  Tier: db-custom-2-7680
+  Storage: 50 GB
+  High Availability: Enabled
+  Backups: 7 days retention
+
+Memorystore:
+  Tier: Standard (with replica)
+  Capacity: 5 GB
+
+Cost: ~$400/month
+```
+
+**Production Environment**:
+```yaml
+Region: us-central1 (multi-region future)
+Cloud Run:
+  Min Instances: 2 (always warm)
+  Max Instances: 100
+  CPU: 2 vCPU
+  Memory: 4 GiB
+
+Cloud SQL:
+  Tier: db-custom-4-15360
+  Storage: 150 GB (auto-expand)
+  High Availability: Enabled
+  Backups: 30 days retention
+  Read Replicas: 1
+
+Memorystore:
+  Tier: Standard (with replica)
+  Capacity: 20 GB
+
+Cloud Pub/Sub:
+  Topics: 5
+  Subscriptions: 10
+
+Cost: ~$900/month
+```
+
+### 13.4 Deployment Pipeline
+
+**CI/CD Flow** (Cloud Build):
+```
+1. Code Push to main branch
+   ↓
+2. Cloud Build Trigger
+   ↓
+3. Run Tests (unit + integration)
+   ↓
+4. Build Docker Image
+   ↓
+5. Push to Artifact Registry
+   ↓
+6. Container Vulnerability Scan
+   ↓
+7. Deploy to Staging (auto)
+   ↓
+8. Run Smoke Tests
+   ↓
+9. Await Manual Approval
+   ↓
+10. Deploy to Production
+   ↓
+11. Run Health Checks
+   ↓
+12. Gradual Traffic Shift (0% → 100%)
+   ↓
+13. Monitor Metrics
+   ↓
+14. Rollback if errors detected
+```
+
+**Blue-Green Deployment**:
+```yaml
+# Deploy new revision without traffic
+gcloud run deploy quiz-server \
+  --image=gcr.io/project-id/quiz-server:v2 \
+  --no-traffic \
+  --tag=blue
+
+# Test blue revision
+curl https://blue---quiz-server-xxx.run.app/health
+
+# Shift traffic gradually
+gcloud run services update-traffic quiz-server \
+  --to-revisions=quiz-server-v2=25  # 25% traffic
+
+# Monitor metrics, then increase
+gcloud run services update-traffic quiz-server \
+  --to-revisions=quiz-server-v2=100  # 100% traffic
+
+# Rollback if needed
+gcloud run services update-traffic quiz-server \
+  --to-revisions=quiz-server-v1=100
+```
+
+### 13.5 Configuration Management
+
+**Environment Variables** (Cloud Run):
+```yaml
+Runtime Environment Variables:
+  ENV: production|staging|development
+  PROJECT_ID: gcp-project-id
+  REGION: us-central1
+  LOG_LEVEL: info|debug|warn|error
+  
+Service Connections:
+  CLOUD_SQL_CONNECTION: project:region:instance
+  REDIS_HOST: 10.x.x.x
+  REDIS_PORT: 6379
+  
+Feature Flags:
+  ENABLE_ANALYTICS: true|false
+  ENABLE_RATE_LIMITING: true|false
+  MAX_CONNECTIONS_PER_INSTANCE: 5000
+```
+
+**Secrets** (Secret Manager):
+- Never in environment variables
+- Accessed at runtime via Secret Manager API
+- Automatic rotation policies
+- Audit logging for access
+
+### 13.6 Disaster Recovery
+
+**Backup Strategy**:
+```yaml
+Cloud SQL:
+  - Automated Backups: Daily at 03:00 UTC
+  - Retention: 30 days
+  - Point-in-time Recovery: 7 days
+  - Cross-region Backup: Enabled (us-east1)
+  - Export to Cloud Storage: Weekly (for long-term retention)
+
+Memorystore:
+  - RDB Snapshots: Every 6 hours
+  - Export to Cloud Storage: Daily
+  - Retention: 7 days
+
+Application Data:
+  - Answer Submissions: Exported to BigQuery daily
+  - Session Logs: Cloud Logging with 400-day retention
+```
+
+**Recovery Objectives**:
+```yaml
+RTO (Recovery Time Objective): 1 hour
+RPO (Recovery Point Objective): 5 minutes
+
+Disaster Scenarios:
+  Regional Outage:
+    - Manual failover to backup region
+    - DNS update to route traffic
+    - Estimated recovery: 30 minutes
+  
+  Data Corruption:
+    - Restore from Cloud SQL backup
+    - Point-in-time recovery
+    - Estimated recovery: 15 minutes
+  
+  Application Bug:
+    - Rollback to previous Cloud Run revision
+    - Estimated recovery: 2 minutes
+```
+
+**Runbooks**:
+1. Database restoration procedure
+2. Cross-region failover procedure
+3. Application rollback procedure
+4. Security incident response
+5. Performance degradation troubleshooting
 
 ### 13.1 Phase 1: Foundation (MVP)
 
